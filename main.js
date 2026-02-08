@@ -1,33 +1,3 @@
-/*
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-
-const containerStyle = window.getComputedStyle(document.getElementById('container'));
-canvas.width = parseFloat(containerStyle.width);
-canvas.height = canvas.width;
-
-const rows = 8;
-const columns = 8;
-const tileSize = canvas.width / rows;
-
-const spritesId = ['0', '1', '2', '3', '4', '5', '6', '7', '8', 'covered', 'mine', 'flag']
-let sprites = []
-
-for (let i = 0; i < spritesId.length; i++) {
-    sprites[i] = document.getElementById(spritesId[i])
-}
-
-let grid = []
-
-for (let x = 0; x < rows; x++) {
-    grid[x] = [];
-    for (let y = 0; y < columns; y++) {
-        grid[x][y] = 0;
-        ctx.drawImage(sprites[1], tileSize * x, tileSize * y, tileSize, tileSize);
-    }
-}
-/*
-
 /* =====================
    CONFIG
 ===================== */
@@ -37,9 +7,9 @@ const ctx = canvas.getContext("2d");
 const containerStyle = window.getComputedStyle(document.getElementById('container'));
 canvas.width = parseFloat(containerStyle.width);
 
-const COLS = 6;
+const COLS = 10;
 const ROWS = 12;
-const MINES = 10;
+const MINES = 20;
 const TILE_SIZE = canvas.width / COLS;
 canvas.height = TILE_SIZE * ROWS;
 
@@ -501,7 +471,7 @@ if (dy < 0) {
   if (!cell.revealed) {
     cell.flagged = !cell.flagged;
     spawnTileParticle(x, y);
-    playSound('flag', { pitch: getRandomPitch() });
+    playSound('flag', { pitch: getRandomPitch(), volume: 1.0 });
   }
 }
 
@@ -510,13 +480,13 @@ if (dy > 0) {
   spawnTileParticle(x, y);
 
   if (!cell.revealed && !cell.flagged) {
-  playSound('dig', { pitch: getRandomPitch() });
-  triggerCameraShake(3, 100); // weak shake on dig
+  playSound('dig', { pitch: getRandomPitch() , volume: 1.5});
+  triggerCameraShake(10, 100); // weak shake on dig
   console.log(AudioEngine.ctx?.state);
 
     if (cell.mine) {
       playSound('mine', { pitch: getRandomPitch() });
-      triggerCameraShake(12, 300); // strong shake on mine
+      triggerCameraShake(20, 300); // strong shake on mine
 
       revealAllMines();
       // halve score (no decimals), persist and show bulge
@@ -535,16 +505,17 @@ if (dy > 0) {
     reveal(x, y, true);
   } 
   else if (cell.revealed) {
-    playSound('dig', { pitch: getRandomPitch() });
-    triggerCameraShake(3, 100); // weak shake on chord dig
+    playSound('dig', { pitch: getRandomPitch(), volume: 1.5 });
+    triggerCameraShake(10, 100); // weak shake on chord dig
     chord(x, y);
   }
 }
 
   if (checkWin()) {
     revealAllMines();
-    triggerCameraShake(15, 400); // strong shake on win
+    triggerCameraShake(20, 400); // strong shake on win
     playSound('win');
+    playSound('mine');
     // celebratory burst with flag particles and immediate reset
     spawnCanvasParticles(200, images.flag);
     resetGame();
@@ -556,7 +527,7 @@ function loseGame(x, y) {
   spawnTileParticle(x, y);
 
   playSound('mine');
-  triggerCameraShake(15, 400); // strong shake on chord mine
+  triggerCameraShake(20, 400); // strong shake on chord mine
   // halve score (no decimals), save and show it with bulge
   scoreTarget = Math.floor(scoreTarget / 2);
   scoreDisplay = scoreTarget;
@@ -692,7 +663,7 @@ function playBackgroundMusic() {
   AudioEngine.bgmSource.loop = true;
 
   const bgmGain = AudioEngine.ctx.createGain();
-  bgmGain.gain.value = 0.7;
+  bgmGain.gain.value = 0.5;
 
   AudioEngine.bgmSource.connect(bgmGain);
   bgmGain.connect(AudioEngine.master);
