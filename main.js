@@ -37,11 +37,13 @@ const ctx = canvas.getContext("2d");
 const containerStyle = window.getComputedStyle(document.getElementById('container'));
 canvas.width = parseFloat(containerStyle.width);
 
-const COLS = 10;
-const ROWS = 20;
-const MINES = 50;
+const COLS = 6;
+const ROWS = 12;
+const MINES = 10;
 const TILE_SIZE = canvas.width / COLS;
 canvas.height = TILE_SIZE * ROWS;
+
+let sounds = {};
 
 /* =====================
    PARTICLE CONFIG
@@ -55,22 +57,6 @@ const TILE_PARTICLE = {
   horizontalSpread: 10
 };
 
-let audioUnlocked = false;
-
-function unlockAudio() {
-  if (audioUnlocked) return;
-
-  Object.values(sounds).forEach(sound => {
-    sound.muted = true;
-    sound.play().then(() => {
-      sound.pause();
-      sound.currentTime = 0;
-      sound.muted = false;
-    }).catch(() => {});
-  });
-
-  audioUnlocked = true;
-}
 
 /* =====================
    IMAGES
@@ -138,8 +124,9 @@ function updateTileParticles() {
 function drawTileParticles() {
   for (const p of tileParticles) {
     ctx.globalAlpha = p.alpha;
+    const particleImage = p.image || images.covered;
     ctx.drawImage(
-      images.covered,
+      particleImage,
       p.x,
       p.y,
       p.size,
@@ -147,6 +134,49 @@ function drawTileParticles() {
     );
     ctx.globalAlpha = 1;
   }
+}
+
+function spawnCanvasParticles(count = 120, image = null) {
+  for (let i = 0; i < count; i++) {
+    tileParticles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      vx: (Math.random() - 0.5) * TILE_PARTICLE.horizontalSpread * 2,
+      vy: TILE_PARTICLE.initialUpward * (0.6 + Math.random() * 1.4),
+      alpha: 1,
+      size: TILE_SIZE * (0.5 + Math.random() * 1.2),
+      image: image
+    });
+  }
+}
+
+/* =====================
+   CAMERA SHAKE
+===================== */
+const cameraShake = {
+  intensity: 0,
+  duration: 0,
+  elapsed: 0
+};
+
+function triggerCameraShake(intensity, duration) {
+  cameraShake.intensity = intensity;
+  cameraShake.duration = duration;
+  cameraShake.elapsed = 0;
+}
+
+function updateCameraShake() {
+  if (cameraShake.elapsed >= cameraShake.duration) {
+    cameraShake.intensity = 0;
+    return { x: 0, y: 0 };
+  }
+  cameraShake.elapsed += 16; // approx. 60fps delta
+  const offset = Math.random() - 0.5;
+  const shake = cameraShake.intensity * offset;
+  return {
+    x: shake,
+    y: shake
+  };
 }
 
 
@@ -197,6 +227,88 @@ function resetGame() {
   board.length = 0;
   firstSwipe = true;
   init();
+}
+
+
+/* =====================
+   SCORE SYSTEM
+===================== */
+let scoreDisplay = 0;
+let scoreTarget = 0;
+let scoreAnimating = false;
+const scoreElement = document.getElementById('score');
+const SCORE_PER_TILE = 5;
+
+function initScore() {
+  scoreDisplay = parseInt(localStorage.getItem('minesweeperScore') || '0');
+  scoreTarget = scoreDisplay;
+  updateScoreDisplay();
+}
+
+function updateScoreDisplay() {
+  scoreElement.textContent = Math.floor(scoreDisplay);
+}
+
+function addScore(amount) {
+  scoreTarget += amount;
+  saveScore();
+  triggerScoreBulge();
+  animateScore();
+}
+
+function animateScore() {
+  if (scoreAnimating) return;
+  scoreAnimating = true;
+
+  const frameRate = 60;
+  const duration = 0.5; // seconds
+  const frames = Math.ceil(frameRate * duration);
+  const perFrame = (scoreTarget - scoreDisplay) / frames;
+  let currentFrame = 0;
+  let lastTickFrame = 0;
+  const tickInterval = 4; // play score sound every 4 frames
+
+  function step() {
+    currentFrame++;
+    scoreDisplay += perFrame;
+
+    // Play score tick sound at intervals
+    if (currentFrame - lastTickFrame >= tickInterval) {
+      playScoreTick();
+      lastTickFrame = currentFrame;
+    }
+
+    if (currentFrame >= frames) {
+      scoreDisplay = scoreTarget;
+      scoreAnimating = false;
+    }
+
+    updateScoreDisplay();
+
+    if (scoreAnimating) {
+      requestAnimationFrame(step);
+    }
+  }
+
+  step();
+}
+
+function triggerScoreBulge() {
+  scoreElement.classList.remove('bulge');
+  // Trigger reflow to restart animation
+  void scoreElement.offsetWidth;
+  scoreElement.classList.add('bulge');
+}
+
+function saveScore() {
+  localStorage.setItem('minesweeperScore', Math.floor(scoreTarget).toString());
+}
+
+function resetScore() {
+  scoreDisplay = 0;
+  scoreTarget = 0;
+  saveScore();
+  updateScoreDisplay();
 }
 
 
@@ -254,23 +366,35 @@ function inBounds(x, y) {
   return x >= 0 && y >= 0 && x < COLS && y < ROWS;
 }
 
-function reveal(x, y) {
-  const stack = [[x, y]];
+function reveal(x, y, isInitial = false) {
+  // stack entries: [x, y, isInitialForThisEntry]
+  const stack = [[x, y, !!isInitial]];
+  let tilesRevealed = 0;
 
   while (stack.length) {
-    const [cx, cy] = stack.pop();
+    const [cx, cy, initial] = stack.pop();
     const cell = board[cx][cy];
 
     if (cell.revealed || cell.flagged) continue;
     cell.revealed = true;
+    tilesRevealed++;
+
+    // spawn a particle for every auto-revealed tile (but avoid duplicating
+    // the particle for the original tile if the caller already spawned one)
+    if (!initial) spawnTileParticle(cx, cy);
 
     if (cell.neighbors === 0 && !cell.mine) {
       for (const [dx, dy] of NEIGHBORS) {
         const nx = cx + dx;
         const ny = cy + dy;
-        if (inBounds(nx, ny)) stack.push([nx, ny]);
+        if (inBounds(nx, ny)) stack.push([nx, ny, false]);
       }
     }
+  }
+
+  // Add score for each tile revealed (only on initial touch reveal, not on chord auto-reveals)
+  if (isInitial && tilesRevealed > 0) {
+    addScore(tilesRevealed * SCORE_PER_TILE);
   }
 }
 
@@ -301,24 +425,37 @@ function chord(x, y) {
     }
   }
 
-  // Safe to reveal
-  hidden.forEach(([hx, hy]) => reveal(hx, hy));
+  // Safe to reveal - count tiles and add score
+  let chordTilesRevealed = 0;
+  for (const [hx, hy] of hidden) {
+    // Use a modified reveal that counts but doesn't trigger score (we'll do it once for chord)
+    const tempStack = [[hx, hy, false]];
+    while (tempStack.length) {
+      const [cx, cy, initial] = tempStack.pop();
+      const c = board[cx][cy];
+      if (c.revealed || c.flagged) continue;
+      c.revealed = true;
+      chordTilesRevealed++;
+      
+      // spawn particles for every chord-revealed tile (except initial)
+      if (!initial) spawnTileParticle(cx, cy);
+      
+      if (c.neighbors === 0 && !c.mine) {
+        for (const [dx, dy] of NEIGHBORS) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (inBounds(nx, ny)) tempStack.push([nx, ny, false]);
+        }
+      }
+    }
+  }
+  
+  // Add score once for the entire chord action
+  if (chordTilesRevealed > 0) {
+    addScore(chordTilesRevealed * SCORE_PER_TILE);
+  }
 }
 
-
-/* =====================
-   SOUNDS
-===================== */
-const sounds = {
-  dig: new Audio("dig.mp3"),
-  flag: new Audio("flag.mp3"),
-  explode: new Audio("explode.mp3")
-};
-
-Object.values(sounds).forEach(s => {
-  s.volume = 0.6;
-  s.preload = "auto";
-});
 
 
 /* =====================
@@ -328,12 +465,12 @@ let touchStartX = 0;
 let touchStartY = 0;
 
 canvas.addEventListener("touchstart", e => {
-
-     unlockAudio();
+  e.preventDefault();  
+  unlockAudio();
   const t = e.touches[0];
   touchStartX = t.clientX;
   touchStartY = t.clientY;
-});
+}, {passive: false});
 
 canvas.addEventListener("touchend", e => {
   const t = e.changedTouches[0];
@@ -364,8 +501,7 @@ if (dy < 0) {
   if (!cell.revealed) {
     cell.flagged = !cell.flagged;
     spawnTileParticle(x, y);
-    sounds.flag.currentTime = 0;
-    sounds.flag.play();
+    playSound('flag', { pitch: getRandomPitch() });
   }
 }
 
@@ -374,36 +510,44 @@ if (dy > 0) {
   spawnTileParticle(x, y);
 
   if (!cell.revealed && !cell.flagged) {
-    sounds.dig.currentTime = 0;
-    sounds.dig.play();
+  playSound('dig', { pitch: getRandomPitch() });
+  triggerCameraShake(3, 100); // weak shake on dig
+  console.log(AudioEngine.ctx?.state);
 
     if (cell.mine) {
-      sounds.explode.currentTime = 0;
-      sounds.explode.play();
+      playSound('mine', { pitch: getRandomPitch() });
+      triggerCameraShake(12, 300); // strong shake on mine
 
       revealAllMines();
-      setTimeout(() => {
-        alert("💥 Game Over");
-        resetGame();
-      }, 1000);
+      // halve score (no decimals), persist and show bulge
+      scoreTarget = Math.floor(scoreTarget / 2);
+      scoreDisplay = scoreTarget;
+      saveScore();
+      updateScoreDisplay();
+      triggerScoreBulge();
+
+      // particle explosion across the canvas and immediate reset
+      spawnCanvasParticles(160, images.mine);
+      resetGame();
       return;
     }
 
-    reveal(x, y);
+    reveal(x, y, true);
   } 
   else if (cell.revealed) {
-    sounds.dig.currentTime = 0;
-    sounds.dig.play();
+    playSound('dig', { pitch: getRandomPitch() });
+    triggerCameraShake(3, 100); // weak shake on chord dig
     chord(x, y);
   }
 }
 
   if (checkWin()) {
     revealAllMines();
-    setTimeout(() => {
-      alert("🎉 You Win!");
-      resetGame();
-    }, 1000);
+    triggerCameraShake(15, 400); // strong shake on win
+    playSound('win');
+    // celebratory burst with flag particles and immediate reset
+    spawnCanvasParticles(200, images.flag);
+    resetGame();
   }
 });
 
@@ -411,13 +555,18 @@ function loseGame(x, y) {
   revealAllMines();
   spawnTileParticle(x, y);
 
-  sounds.explode.currentTime = 0;
-  sounds.explode.play();
+  playSound('mine');
+  triggerCameraShake(15, 400); // strong shake on chord mine
+  // halve score (no decimals), save and show it with bulge
+  scoreTarget = Math.floor(scoreTarget / 2);
+  scoreDisplay = scoreTarget;
+  saveScore();
+  updateScoreDisplay();
+  triggerScoreBulge();
 
-  setTimeout(() => {
-    alert("💥 Game Over");
-    resetGame();
-  }, 1000);
+  // global explosion and immediate reset
+  spawnCanvasParticles(50, images.mine);
+  resetGame();
 }
 
 
@@ -463,9 +612,15 @@ function loop(now) {
   const dt = now - lastTime;
   lastTime = now;
 
+  const shake = updateCameraShake();
+  ctx.save();
+  ctx.translate(shake.x, shake.y);
+
   draw();
   updateTileParticles();
   drawTileParticles();
+
+  ctx.restore();
 
   requestAnimationFrame(loop);
 }
@@ -473,8 +628,126 @@ function loop(now) {
 
 requestAnimationFrame(loop);
 
+/* =====================
+   SOUND
+===================== */
+
+const AudioEngine = {
+  ctx: null,
+  master: null,
+  unlocked: false,
+  buffers: {},
+  bgmSource: null
+};
+
+function unlockAudio() {
+  if (AudioEngine.unlocked) return;
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+
+  AudioEngine.ctx = ctx;
+  AudioEngine.master = ctx.createGain();
+  AudioEngine.master.gain.value = 0.9;
+  AudioEngine.master.connect(ctx.destination);
+
+  ctx.resume().then(() => {
+    console.log("🔊 Audio unlocked:", ctx.state);
+    AudioEngine.unlocked = true;
+    initSounds().then(() => playBackgroundMusic());
+  });
+}
+
+function playSound(name, options = {}) {
+  if (!AudioEngine.unlocked) return;
+  if (!sounds[name]) return;
+  const source = AudioEngine.ctx.createBufferSource();
+  source.buffer = sounds[name];
+
+  // default pitch
+  let pitch = options.pitch ?? 1.0;
+  // fallback for number as second arg
+  if (typeof options === 'number') pitch = options;
+  
+  // volume can be passed as option (0-1 scale)
+  let volume = options.volume ?? 1.0;
+
+  source.playbackRate.value = pitch;
+  
+  // Create a gain node for per-sound volume control
+  const gainNode = AudioEngine.ctx.createGain();
+  gainNode.gain.value = volume;
+  
+  source.connect(gainNode);
+  gainNode.connect(AudioEngine.master);
+  source.start(0);
+}
+
+function playBackgroundMusic() {
+  if (!AudioEngine.unlocked || !sounds.bgm) return;
+  if (AudioEngine.bgmSource) return; // Already playing
+
+  AudioEngine.bgmSource = AudioEngine.ctx.createBufferSource();
+  AudioEngine.bgmSource.buffer = sounds.bgm;
+  AudioEngine.bgmSource.loop = true;
+
+  const bgmGain = AudioEngine.ctx.createGain();
+  bgmGain.gain.value = 0.7;
+
+  AudioEngine.bgmSource.connect(bgmGain);
+  bgmGain.connect(AudioEngine.master);
+  AudioEngine.bgmSource.start(0);
+}
+
+function playScoreTick() {
+  if (!AudioEngine.unlocked || !sounds.score) return;
+  const source = AudioEngine.ctx.createBufferSource();
+  source.buffer = sounds.score;
+  source.playbackRate.value = getRandomPitch(0.9, 1.1);
+
+  const tickGain = AudioEngine.ctx.createGain();
+  tickGain.gain.value = 0.7;
+
+  source.connect(tickGain);
+  tickGain.connect(AudioEngine.master);
+  source.start(0);
+}
+
+function getRandomPitch(min = 0.95, max = 1.05) {
+  return Math.random() * (max - min) + min;
+}
+
+
+async function loadSound(name, url) {
+  const res = await fetch(url);
+  const arrayBuffer = await res.arrayBuffer();
+  const buffer = await AudioEngine.ctx.decodeAudioData(arrayBuffer);
+  AudioEngine.buffers[name] = buffer;
+  return buffer;
+}
+
+async function loadAllSounds() {
+  await Promise.all([
+    loadSound("dig", "dig.mp3"),
+    loadSound("flag", "flag.mp3"),
+    loadSound("mine", "explode.mp3"),
+    loadSound("bgm", "bgm.mp3"),
+      loadSound("score", "score.mp3"),
+      loadSound("win", "win.mp3")
+  ]);
+}
+
+function initSounds() {
+  // Load all sounds and then expose decoded buffers via `sounds`
+  return (async () => {
+    await loadAllSounds();
+    sounds = AudioEngine.buffers;
+  })();
+}
+
 
 /* =====================
    START
 ===================== */
+initScore();
 init();
