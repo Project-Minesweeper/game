@@ -7,13 +7,76 @@ const ctx = canvas.getContext("2d");
 const containerStyle = window.getComputedStyle(document.getElementById('container'));
 canvas.width = parseFloat(containerStyle.width);
 
-const COLS = 10;
-const ROWS = 12;
-const MINES = 20;
-const TILE_SIZE = canvas.width / COLS;
+// LEVEL SYSTEM VARIABLES
+// Level determines grid size and mine count
+// Formulas for calculating difficulty:
+// COLS = 4 + (level - 1) = 3 + level
+// ROWS = 4 + (level - 1) = 3 + level
+// MINES = 2 + (level - 1) * 2 = (level * 2) mines
+// Level 1: 4x4 grid with 2 mines
+// Level 2: 5x5 grid with 4 mines
+// Level 3: 6x6 grid with 6 mines, and so on...
+
+let currentLevel = 1; // Current game level (increments on win, resets to 1 on lose)
+let COLS = 4 + (currentLevel - 1); // Number of columns based on level
+let ROWS = 4 + (currentLevel - 1); // Number of rows based on level
+let MINES = 2 + (currentLevel - 1) * 2; // Number of mines based on level
+let TILE_SIZE = canvas.width / COLS; // Tile size that scales with column count
 canvas.height = TILE_SIZE * ROWS;
 
 let sounds = {};
+
+/* =====================
+   LEVEL SYSTEM FUNCTIONS
+===================== */
+/**
+ * Calculates and updates grid dimensions based on current level
+ * Using formulas:
+ * COLS = 3 + level
+ * ROWS = 3 + level
+ * MINES = level * 2
+ */
+function updateGridSizeForLevel() {
+  COLS = 4 + (currentLevel - 1);
+  ROWS = 4 + (currentLevel - 1);
+  MINES = 2 + (currentLevel - 1) * 2;
+  
+  // Recalculate tile size and canvas dimensions based on new grid size
+  TILE_SIZE = canvas.width / COLS;
+  canvas.height = TILE_SIZE * ROWS;
+}
+
+/**
+ * Updates the level display on screen
+ */
+function updateLevelDisplay() {
+  const levelElement = document.getElementById('level');
+  levelElement.textContent = `Level: ${currentLevel}`;
+}
+
+/**
+ * Increments the level and updates grid dimensions
+ * Called when the player wins
+ */
+function nextLevel() {
+  currentLevel++;
+  updateGridSizeForLevel();
+  updateLevelDisplay();
+}
+
+/**
+ * Resets level to 1 and updates grid dimensions
+ * Called when the player loses
+ */
+function resetLevel() {
+  currentLevel = 1;
+  updateGridSizeForLevel();
+  updateLevelDisplay();
+}
+
+/* =====================
+   INIT
+===================== */
 
 /* =====================
    PARTICLE CONFIG
@@ -22,7 +85,7 @@ const TILE_PARTICLE = {
   gravity: 0.35,
   bounce: 0.65,
   friction: 0.98,
-  fadeSpeed: 0.005,
+  fadeSpeed: 0.015,
   initialUpward: -6,
   horizontalSpread: 10
 };
@@ -78,6 +141,12 @@ function updateTileParticles() {
       p.vx *= TILE_PARTICLE.friction;
     }
 
+    // Ceiling bounce
+    if (p.y < 0) {
+      p.y = 0;
+      p.vy *= -TILE_PARTICLE.bounce;
+    }
+
     // Wall bounce
     if (p.x < 0 || p.x + p.size > canvas.width) {
       p.vx *= -TILE_PARTICLE.bounce;
@@ -114,7 +183,7 @@ function spawnCanvasParticles(count = 120, image = null) {
       vx: (Math.random() - 0.5) * TILE_PARTICLE.horizontalSpread * 2,
       vy: TILE_PARTICLE.initialUpward * (0.6 + Math.random() * 1.4),
       alpha: 1,
-      size: TILE_SIZE * (0.5 + Math.random() * 1.2),
+      size: TILE_SIZE * 0.8,// * (0.5 + Math.random() * 1.2),
       image: image
     });
   }
@@ -135,12 +204,13 @@ function triggerCameraShake(intensity, duration) {
   cameraShake.elapsed = 0;
 }
 
-function updateCameraShake() {
+function updateCameraShake(deltaTime) {
   if (cameraShake.elapsed >= cameraShake.duration) {
     cameraShake.intensity = 0;
+    cameraShake.elapsed = 0;
     return { x: 0, y: 0 };
   }
-  cameraShake.elapsed += 16; // approx. 60fps delta
+  cameraShake.elapsed += deltaTime;
   const offset = Math.random() - 0.5;
   const shake = cameraShake.intensity * offset;
   return {
@@ -206,24 +276,105 @@ function resetGame() {
 let scoreDisplay = 0;
 let scoreTarget = 0;
 let scoreAnimating = false;
+let highscore = 0; // Highscore saved to localStorage
 const scoreElement = document.getElementById('score');
-const SCORE_PER_TILE = 5;
+const highscoreElement = document.getElementById('highscore');
+const SCORE_PER_TILE = 100;
+const SPEED_BONUS_THRESHOLD = 1000; // milliseconds - actions faster than this get bonus
+const MAX_SPEED_BONUS = 100; // maximum points for speed bonus
+
+/* =====================
+   TIMER SYSTEM
+===================== */
+let gameTimerStart = 0; // Timestamp when game started
+let gameElapsedTime = 0; // Total elapsed time in seconds
+let lastActionTime = 0; // Timestamp of last action for speed calculation
+const timerElement = document.getElementById('timer');
+
+/**
+ * Starts the game timer when the first swipe happens
+ */
+function startGameTimer() {
+  if (gameTimerStart === 0) {
+    gameTimerStart = Date.now();
+    lastActionTime = gameTimerStart;
+  }
+}
+
+/**
+ * Updates the timer display
+ */
+function updateTimerDisplay() {
+  if (gameTimerStart === 0) {
+    timerElement.textContent = '0:00.000';
+    return;
+  }
+  const totalMs = Date.now() - gameTimerStart;
+  const minutes = Math.floor(totalMs / 60000);
+  const seconds = Math.floor((totalMs % 60000) / 1000);
+  const milliseconds = totalMs % 1000;
+  
+  const formattedTime = `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+  timerElement.textContent = formattedTime;
+}
+
+/**
+ * Calculates speed bonus based on time since last action
+ * Faster actions (less time) = higher bonus
+ * Returns bonus points capped at MAX_SPEED_BONUS
+ */
+function calculateSpeedBonus() {
+  const currentTime = Date.now();
+  const timeSinceLastAction = currentTime - lastActionTime;
+  lastActionTime = currentTime;
+  
+  if (timeSinceLastAction > SPEED_BONUS_THRESHOLD) {
+    return 0; // No bonus if too slow
+  }
+  
+  // Calculate bonus: faster = higher bonus
+  // At 0ms = MAX bonus, at SPEED_BONUS_THRESHOLD = 0 bonus
+  const bonus = Math.max(0, MAX_SPEED_BONUS * (1 - timeSinceLastAction / SPEED_BONUS_THRESHOLD));
+  return Math.floor(bonus);
+}
+
+/**
+ * Resets the timer for a new game
+ */
+function resetGameTimer() {
+  gameTimerStart = 0;
+  gameElapsedTime = 0;
+  lastActionTime = 0;
+  updateTimerDisplay();
+}
 
 function initScore() {
-  scoreDisplay = parseInt(localStorage.getItem('minesweeperScore') || '0');
-  scoreTarget = scoreDisplay;
+  scoreDisplay = 0;
+  scoreTarget = 0;
+  highscore = parseInt(localStorage.getItem('minesweeperHighscore') || '0');
   updateScoreDisplay();
+  updateHighscoreDisplay();
 }
 
 function updateScoreDisplay() {
-  scoreElement.textContent = Math.floor(scoreDisplay);
+  scoreElement.textContent = `Score: ${Math.floor(scoreDisplay)}`;
+}
+
+function updateHighscoreDisplay() {
+  highscoreElement.textContent = `Highscore: ${highscore}`;
 }
 
 function addScore(amount) {
   scoreTarget += amount;
-  saveScore();
   triggerScoreBulge();
   animateScore();
+  
+  // Update highscore if current score exceeds it
+  if (scoreTarget > highscore) {
+    highscore = Math.floor(scoreTarget);
+    saveHighscore();
+    updateHighscoreDisplay();
+  }
 }
 
 function animateScore() {
@@ -270,15 +421,15 @@ function triggerScoreBulge() {
   scoreElement.classList.add('bulge');
 }
 
-function saveScore() {
-  localStorage.setItem('minesweeperScore', Math.floor(scoreTarget).toString());
+function saveHighscore() {
+  localStorage.setItem('minesweeperHighscore', highscore.toString());
 }
 
 function resetScore() {
   scoreDisplay = 0;
   scoreTarget = 0;
-  saveScore();
   updateScoreDisplay();
+  resetGameTimer();
 }
 
 
@@ -364,7 +515,9 @@ function reveal(x, y, isInitial = false) {
 
   // Add score for each tile revealed (only on initial touch reveal, not on chord auto-reveals)
   if (isInitial && tilesRevealed > 0) {
-    addScore(tilesRevealed * SCORE_PER_TILE);
+    const baseScore = tilesRevealed * SCORE_PER_TILE;
+    const speedBonus = calculateSpeedBonus();
+    addScore(baseScore + speedBonus);
   }
 }
 
@@ -422,7 +575,11 @@ function chord(x, y) {
   
   // Add score once for the entire chord action
   if (chordTilesRevealed > 0) {
-    addScore(chordTilesRevealed * SCORE_PER_TILE);
+    const baseScore = chordTilesRevealed * SCORE_PER_TILE;
+    const speedBonusPerTile = calculateSpeedBonus();
+    // Apply speed bonus for each tile revealed through chording
+    const totalSpeedBonus = speedBonusPerTile * chordTilesRevealed;
+    addScore(baseScore + totalSpeedBonus);
   }
 }
 
@@ -440,6 +597,7 @@ canvas.addEventListener("touchstart", e => {
   const t = e.touches[0];
   touchStartX = t.clientX;
   touchStartY = t.clientY;
+  startGameTimer();
 }, {passive: false});
 
 canvas.addEventListener("touchend", e => {
@@ -489,15 +647,10 @@ if (dy > 0) {
       triggerCameraShake(20, 300); // strong shake on mine
 
       revealAllMines();
-      // halve score (no decimals), persist and show bulge
-      scoreTarget = Math.floor(scoreTarget / 2);
-      scoreDisplay = scoreTarget;
-      saveScore();
-      updateScoreDisplay();
-      triggerScoreBulge();
-
-      // particle explosion across the canvas and immediate reset
+      // particle explosion across the canvas and reset to level 1
       spawnCanvasParticles(160, images.mine);
+      resetLevel();
+      resetScore();
       resetGame();
       return;
     }
@@ -516,8 +669,9 @@ if (dy > 0) {
     triggerCameraShake(20, 400); // strong shake on win
     playSound('win');
     playSound('mine');
-    // celebratory burst with flag particles and immediate reset
+    // celebratory burst with flag particles and advance to next level
     spawnCanvasParticles(200, images.flag);
+    nextLevel();
     resetGame();
   }
 });
@@ -528,15 +682,11 @@ function loseGame(x, y) {
 
   playSound('mine');
   triggerCameraShake(20, 400); // strong shake on chord mine
-  // halve score (no decimals), save and show it with bulge
-  scoreTarget = Math.floor(scoreTarget / 2);
-  scoreDisplay = scoreTarget;
-  saveScore();
-  updateScoreDisplay();
-  triggerScoreBulge();
-
-  // global explosion and immediate reset
+  
+  // global explosion and reset to level 1
   spawnCanvasParticles(50, images.mine);
+  resetLevel();
+  resetScore();
   resetGame();
 }
 
@@ -583,13 +733,14 @@ function loop(now) {
   const dt = now - lastTime;
   lastTime = now;
 
-  const shake = updateCameraShake();
+  const shake = updateCameraShake(dt);
   ctx.save();
   ctx.translate(shake.x, shake.y);
 
   draw();
   updateTileParticles();
   drawTileParticles();
+  updateTimerDisplay();
 
   ctx.restore();
 
@@ -721,4 +872,5 @@ function initSounds() {
    START
 ===================== */
 initScore();
+updateLevelDisplay();
 init();

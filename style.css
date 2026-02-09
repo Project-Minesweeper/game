@@ -19,17 +19,73 @@ body {
 }
 
 #score {
-    display:none;
     font-family: 'Minecraft', monospace;
     font-weight: bolder;
-    font-size: 50px;
-    margin-bottom: 10px;
-    color: black;
+    font-size: 20px;
+    color: #333;
     transition: transform 0.1s ease-out;
     user-select: none;
-    padding: 10px 10px 0px 10px;
-    margin-bottom: 10px;
-    border-bottom: 5px dashed black;
+    padding: 10px;
+    margin: 0;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#highscore {
+    font-family: 'Minecraft', monospace;
+    font-weight: bolder;
+    font-size: 20px;
+    color: #333;
+    user-select: none;
+    padding: 10px;
+    margin: 0;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#timer {
+    font-family: 'Minecraft', monospace;
+    font-weight: bolder;
+    font-size: 20px;
+    color: #333;
+    user-select: none;
+    padding: 10px;
+    margin: 0;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#level {
+    font-family: 'Minecraft', monospace;
+    font-weight: bolder;
+    font-size: 20px;
+    color: #333;
+    user-select: none;
+    padding: 10px;
+    margin: 0;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#header {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 10px 0;
+    border-bottom: 5px solid #333;
+    margin-bottom: 20px;
+}
+
+#header-top {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+#header-bottom {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
 }
 
 #score.bulge {
